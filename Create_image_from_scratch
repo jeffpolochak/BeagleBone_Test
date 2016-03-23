@@ -1,0 +1,586 @@
+Things you need:
+1. A USB to serial cable and drivers
+2. Putty
+3. uSD card.  At least 4GB to burn the OS into eMMC, and 32 GB for the logging card
+4. A uSD imaging tool. http://www.alexpage.de/download/usbit/usbit.zip
+5. Internet connection
+
+Note: Much of these instruction were derived from http://elinux.org/Beagleboard:BeagleBoneBlack_Debian
+
+OS
+Download Debian Image
+https://rcn-ee.com/rootfs/bb.org/release/2015-07-17/console/BBB-eMMC-flasher-debian-7.8-console-armhf-2015-07-17-2gb.img.xz
+Decompress IMG file, and then write to an SD card via uSD imaging tool.
+
+It is recommended that a 5 VDC power supply of 1A or a powered USB HUB be used.
+
+Current during the flash process can exceed 500mA in some instances which can cause the USB power to shutdown from a PC or laptop.
+You can also use a 5V Wall Wart power adapter with a USB port on it as long as it can deliver 1A.
+Do not flash the board with the Ethernet cable attached. The Ethernet connections uses more current
+
+1. "Restore" the img file onto the SD card using the imaging tool.
+
+2.  Insert uSD card.  Hold switch S2 (Boot Switch) down by pressing on it and holding it while plugging in the power.
+http://elinux.org/Beagleboard:Updating_The_Software 
+
+The board will start flashing the eMMC and the LEDs will flash to show activity. When all four LEDS are on steady, the eMMC is flashed.  Remove power, and then repower to reboot.
+
+3. login/pass ubuntu/temppwd
+If intenet access is lacking, add a nameserver:
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+
+Update the system
+sudo apt-get update
+sudo apt-get dist-upgrade
+#Install a good text editor:
+sudo apt-get install vim
+
+
+4. Enable USB networking
+sudo apt-get install udhcpd
+#follow any installation instructions to enable it
+
+verify/add this entry in /etc/network/interfaces:
+# Ethernet/RNDIS gadget (g_ether)
+# ... or on host side, usbnet and random hwaddr
+iface usb0 inet static
+        address 192.168.7.2
+        netmask 255.255.255.252
+        network 192.168.7.0
+        gateway 192.168.7.1
+        dns-nameservers 8.8.8.8 8.8.4.4
+
+4. Reduce DHCP wait time on boot.  Edit the dhclient configuration and make sure the following lines are uncommented and changed as below
+sudo vim /etc/dhcp/dhclient.conf
+
+timeout 5;
+retry 15;
+
+
+6.  Add the "bms" user.  Make the password "voltage" when prompted.
+sudo adduser bms
+
+7.  Grant the bms user sudo privileges.
+sudo visudo
+find the line:
+root    ALL=(ALL:ALL) ALL
+
+add the following line directly below:
+bms     ALL=(ALL:ALL) ALL
+
+save and quit by hitting CTRL-X, followed by "Y", and then hit "ENTER" to confirm.
+reboot and login as bms
+
+8. Remove the debian user
+sudo userdel debian
+#remove the login message for that user from etc/issue and etc/issue.net
+
+9.  SSH setup for normal user
+ssh-keygen  # accept default options
+chmod 700 $HOME/.ssh
+
+10.  Get some software
+sudo apt-get update
+sudo apt-get install ssh xorg xauth xinput-calibrator vim qt4-dev-tools libqwt-dev python-dev python3-dev libunittest++-dev apache2 libapache2-mod-php5 php5-dev php5-cli php5-curl liblzo2-dev gnuplot-nox sqlite3 libsqlite3-dev libzmq-dev libyaml-dev lcov libboost-python-dev libjansson-dev libncurses5-dev flex bison psmisc rsync pigz php5-curl byobu screen cmake build-essential git sshpass cgroup-bin parted cron logrotate rsyslog curl libcurl4-openssl-dev python-matplotlib python-pip python-twisted python-pymodbus python3-serial python-serial python-yaml python3-yaml ntpdate ntp freetype-dev libxft-dev libpng12-dev lsb-release stress
+sudo pip install --upgrade pip
+sudo pip install --upgrade setuptools
+sudo pip install azure
+
+#Note these missing packages in debian vs ubuntu:
+#E: Unable to locate package qtbase5-dev
+#E: Unable to locate package can-utils
+#E: Unable to locate package python3-matplotlib
+
+#but qt5 can be installed via backports
+#add wheezy backports to sources
+sudo vim /etc/apt/sources.list
+#add this line:
+deb http://http.debian.net/debian wheezy-backports main
+
+sudo apt-get -t wheezy-backports install qtbase5-dev
+
+11.
+# we want python 3.4.  Building python and matplotlib take around an hour each on BBB
+mkdir -p $HOME/thirdparty
+cd $HOME/thirdparty
+sudo wget https://www.python.org/ftp/python/3.4.3/Python-3.4.3.tgz
+sudo tar xzf Python-3.4.3.tgz
+sudo rm Python-3.4.3.tgz
+cd Python-3.4.3
+./configure
+make 
+sudo make install
+sudo pip3 install --upgrade pip
+sudo pip3 install --upgrade setuptools
+sudo pip3 install matplotlib
+
+#alternate method (not recommended)
+echo "deb [arch=armhf] http://http.debian.net/debian sid main contrib non-free " | sudo tee -a /etc/apt/sources.list
+sudo apt-get update 
+sudo apt-get install python3.4-dev
+  # Answer YES to restarting services without asking
+sudo vim /etc/apt/sources.list
+  # Comment out last line that we just added!
+sudo apt-get update 
+sudo ln -s -f python3.4 /usr/bin/python3
+
+12.  Get and build Socket CAN utilities
+cd $HOME/thirdparty
+git clone https://github.com/linux-can/can-utils.git
+cd can-utils
+./autogen.sh
+./configure
+make
+sudo make install
+
+
+# Good things to try
+cansniffer can0 -t 0 -c
+cansend can0 202#03.444F  # to turn on both contactors on AVR-CAN micro with ID=2
+candump -t A -a -d -e -x can0
+canbusload can0@500000 can1@500000 -r -t -c -b
+
+13.  Set up the timezone. For east coast, choose America/New_York
+sudo /usr/sbin/dpkg-reconfigure tzdata
+
+#SKIP
+14. Copy over mikrobuscape device tree overlay...
+cd $HOME/thirdparty
+wget https://github.com/TIGAL/BBB-mikroBUS-Cape/raw/master/BB_board_dtbo.tar
+tar -xvf BB_board_dtbo.tar
+sudo cp BB-MIKROBUS-01-00A1.dts /lib/firmware/
+sudo cp BB-MIKROBUS-01-00A1.dtbo /lib/firmware/
+
+#tell capemgr to load it
+sudo vim /etc/default/capemgr
+
+sudo reboot
+
+15. Kernel update
+cd /opt/scripts/
+sudo git pull
+cd tools
+sudo ./update_kernel.sh --beta-kernel 
+
+#Debian 8: edit profile to add env vars
+export SLOTS=/sys/devices/platform/bone_capemgr/slots
+export PINS=/sys/kernel/debug/pinctrl/44e10800.pinmux/pins
+
+#Debian 7: edit profile to add env vars
+export SLOTS=/sys/devices/bone_capemgr.9/slots
+export PINS=/sys/kernel/debug/pinctrl/44e10800.pinmux/pins
+
+#update the DTC compiler and overlays
+cd
+git clone https://github.com/beagleboard/bb.org-overlays
+cd bb.org-overlays/
+./dtc-overlay.sh
+./install.sh
+
+#tried this didnt work. LCD cape is messing with the pins
+#The BB-BONE-LCD7-01 device tree has buttons that conflict with spi1, remove them
+vim src/arm/BB-BONE-LCD7-01-00A3.dts
+#make edits
+:w src/arm/BB-BONE-LCD7-02-00A3.dts
+:q!
+make
+cd src/arm
+sudo cp BB-BONE-LCD7-02-00A3.dts /lib/firmware/
+sudo cp BB-BONE-LCD7-02-00A3.dtbo /lib/firmware/
+
+#disable the automatic overlay, replace with new one
+cape_disable=bone_capemgr.disable_partno=BB-BONE-LCD7-01
+cape_enable=bone_capemgr.enable_partno=BB-BONE-LCD7-02
+
+
+
+#LTS and beta kernel has drivers we need, skip kernel stuff
+#if you want the git way:
+git clone https://github.com/RobertCNelson/linux-stable-rcn-ee
+cd ./linux-stable-rcn-ee
+git checkout `uname -r` -b tmp
+
+sudo apt-get install ncurses-dev linux-headers-$(uname -r)
+#now we need to get the kernel source so we can build a few kernel modules
+#git takes a long time, needs a lot of disk, recommend you find the tag for the current kernel version on github
+#and download the tar directly. IE 
+#https://github.com/beagleboard/linux/releases/tag/3.8.13-bone74
+cd
+wget https://github.com/beagleboard/linux/archive/3.8.13-bone74.tar.gz
+tar -xvf 3.8.13-bone74.tar.gz
+cd linux-3.8.13-bone74
+make oldconfig
+make prepare
+make scripts
+cp -v /usr/src/linux-headers-$(uname -r)/Module.symvers .
+
+15.1 RTC Click kernel module
+make menuconfig
+#Choose real time clock -> Philips PCF8583 (M)
+#exit and save the new config
+make modules_prepare
+make SUBDIRS=scripts/mod
+make SUBDIRS=drivers/rtc modules
+
+sudo cp drivers/rtc/rtc-pcf8583.ko /lib/modules/$(uname -r)/kernel/drivers/rtc
+sudo depmod
+sudo modprobe rtc-pcf8583
+
+#start here for debian 8/kernel 4.x
+#tip: to see i2c devices: i2cdetect -y -r 2
+sudo su
+echo pcf8583 0x50 > /sys/class/i2c-adapter/i2c-2/new_device
+#/dev/rtc1 should now exist
+ntpdate -b -s -u pool.ntp.org
+hwclock -w -f /dev/rtc1
+
+#make a service that will run on boot to set time
+sudo mkdir /usr/share/rtc_pcf8583
+sudo tee -a /usr/share/rtc_pcf8583/clock_init.sh << EOF
+#!/bin/bash
+sleep 15
+#echo pcf8583 0x50 > /sys/class/i2c-adapter/i2c-1/new_device
+hwclock -s -f /dev/rtc1
+hwclock -w
+EOF
+sudo chmod +x /usr/share/rtc_pcf8583/clock_init.sh
+
+sudo tee -a /lib/systemd/system/rtc-pcf8583.service << EOF
+[Unit]
+Description=pcf8583 RTC Service
+ 
+[Service]
+Type=simple
+WorkingDirectory=/usr/share/rtc_pcf8583
+ExecStart=/bin/bash clock_init.sh
+SyslogIdentifier=rtc_pcf8583
+ 
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl enable rtc-pcf8583.service
+
+15.2 CAN click
+modprobe spi-bcm2708
+modprobe can
+modprobe can-dev
+modprobe can-raw 
+modprobe can-bcm
+modprobe mcp251x
+ip link set can0 up type can bitrate 500000
+
+
+
+
+15. (SKIPPING, getting new CAN hardware) Set up hardware clock on cape
+cd
+curl --user AESystems:Voltage1 'https://raw.githubusercontent.com/aquion/System1/master/BB-DCAN1-00A0.dtbo' > BB-DCAN1-00A0.dtbo
+sudo mv BB-DCAN1-00A0.dtbo /lib/firmware
+cat > ~/bin/init-can.sh << EOF
+sudo /sbin/modprobe can
+sudo /sbin/modprobe can-dev
+sudo /sbin/modprobe can-raw
+echo BB-DCAN1 | sudo tee -a /sys/devices/bone_capemgr.9/slots
+sleep 1
+dmesg | tail -30
+sudo /sbin/ifup can0
+/sbin/ifconfig
+EOF
+chmod +x ~/bin/init-can.sh
+~/bin/init-can.sh
+
+16.  setup the xserver.  Choose "Anybody".
+sudo dpkg-reconfigure x11-common
+
+17.  Set up byobu  
+byobu-select-backend screen
+byobu-ctrl-a screen
+byobu-config
+
+18.  Enable CAN, copy paste the follow command
+sudo tee -a /etc/network/interfaces << EOF
+
+auto can0
+iface can0 inet manual
+    pre-up ip link set \$IFACE type can
+    pre-up ip link set \$IFACE type can bitrate 500000 triple-sampling on
+    pre-up ip link set \$IFACE type can restart-ms 5000
+    pre-up ip link set \$IFACE txqueuelen 1000
+    up /sbin/ifconfig \$IFACE up
+    down /sbin/ifconfig \$IFACE down
+
+EOF
+
+20  Update some boot scripts
+cd /opt
+sudo mv scripts scripts.old
+sudo mkdir -m777 scripts
+git clone https://github.com/RobertCNelson/boot-scripts.git scripts
+
+21.  Grow partition
+cd /opt/scripts/tools
+sudo ./group_partition.sh
+
+21.  Update the kernel headers
+sudo apt-get install linux-headers-$(uname -r)
+
+21.  Create install folder and some symlinks:
+sudo mkdir /opt/bms
+sudo ln -f -s /opt/bms /opt/bms/release
+sudo ln -s /opt/bms/wwwroot /var/www/bms
+
+22.  Set the startup folder to /opt/bms
+sudo tee -a $HOME/.profile << EOF
+
+#start in release software directory
+cd /opt/bms
+EOF
+
+23.  Change the way resolv.conf is generated to be read-only filesystem friendly by editing make_resolv_conf function
+sudo vim /sbin/dhclient-script
+
+#after the line 
+local new_resolv_conf
+# add
+mkdir -m777 /run/resolvconf
+
+# replace both instances of new_resolv_conf=/etc/resolv.conf.dhclient-new with
+new_resolv_conf=/run/resolvconf/resolv.conf.dhclient-new
+
+# comment out all instances of calls to chown and mv in the make_resolv_conf function
+# replace with 
+cat $new_resolv_conf > /etc/resolv.conf
+
+24.  Create resolv.conf symlink
+cd /etc
+sudo mv resolv.conf resolv.back
+sudo ln -f -s ../run/resolvconf/resolv.conf resolv.conf
+
+25.  Add www-data to sudoers
+cat << EOF | sudo tee /etc/sudoers.d/www-data 
+www-data ALL = NOPASSWD: /sbin/shutdown
+www-data ALL = NOPASSWD: /opt/bms/install_software.sh
+www-data ALL = NOPASSWD: /opt/bms/remount_rw.sh
+www-data ALL = NOPASSWD: /opt/bms/interfaces_changer.sh
+EOF
+
+26.  Edit the "/etc/php5/apache2/php.ini" file and set the "post_max_size" and "upload_max_filesize" parameters to 128M.  Tip, in vim, type "/" + search term to search the file.
+sudo vim /etc/php5/apache2/php.ini
+
+27.  Set up default redirect index.html webpage
+cat << EOF | sudo tee /var/www/index.html
+<!DOCTYPE HTML>
+<html lang="en-US">
+    <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="refresh" content="1;url=bms">
+        <script type="text/javascript">
+            window.location.href = "bms"
+        </script>
+        <title>BMS Page Redirection</title>
+    </head>
+    <body>
+        <!-- Note: don't tell people to \`click\` the link, just tell them that it is a link. -->
+        If you are not redirected automatically, follow the <a href='bms'>link to BMS</a>
+    </body>
+</html>
+EOF
+
+28.  Set up X Forwarding, crete Xauthority symlink
+cd $HOME
+rm .Xauthority
+ln -s /run/bms/.Xauthority .
+
+#Update ssh configuration with the location of the .Xauthority
+cat << EOF | sudo tee -a /etc/ssh/sshd_config
+
+XAuthLocation /usr/local/bin/myxauth
+EOF
+
+#uncomment and enable
+ForwardX11 yes
+
+#Update xuath launch config
+cat << EOF | sudo tee /usr/local/bin/myxauth
+#!/bin/sh
+/usr/bin/xauth -f /run/bms/.Xauthority
+EOF
+sudo chmod a+x /usr/local/bin/myxauth
+
+
+29.  Add the filesystem mounting script and touchscreen app in the home/bms/bin directory.
+cd
+mkdir bin
+cd bin
+curl --user AESystems:Voltage1 'https://raw.githubusercontent.com/aquion/System1/master/release/remount_rw.sh' > remount_rw.sh
+chmod a+x remount_rw.sh
+
+30.  Create /logs
+cd /
+sudo mkdir logs
+sudo chmod 777 logs/
+
+31.  Set up default static IP
+
+cat << EOF | sudo tee -a /etc/network/interfaces
+
+auto eth0:1
+iface eth0:1 inet static
+    address 192.168.254.100
+    netmask 255.255.255.0
+EOF
+
+32.  Install BMS software.
+cd $HOME/bin
+
+curl --user AESystems:Voltage1 'https://raw.githubusercontent.com/aquion/System1/master/source/utilities/release_software/install_software.sh' > install_software.sh
+curl --user AESystems:Voltage1 'https://raw.githubusercontent.com/aquion/System1/master/source/utilities/release_software/post_install.sh' > post_install.sh
+chmod a+x install_software.sh
+chmod a+x post_install.sh
+
+sudo ./install_software.sh ~/NAME_OF_PACKAGE_FILE
+
+rm install_software.sh
+rm post_install.sh
+
+#After install, remap the logs symlink
+cd /opt/bms
+sudo rm logs
+sudo ln -s /run/bms/ logs
+
+#TODO in next setup script: Also remove /tmp, and remap as symlink
+#sudo mkdir -p -m 777 /run/bms
+#sudo rm -rf /tmp
+#sudo ln -s /run/bms/ /tmp
+
+sudo rm -rf /var/log
+sudo ln -s /run/bms/ /var/log
+
+33. Provide the Systec USB CAN drivers and install module in case we need external USB-CAN adapter.  From:
+http://www.systec-electronic.com/en/home/support/download-area/drivers
+
+cd $HOME/thirdparty
+wget http://www.systec-electronic.com/uploads/a1/eb/a1eb3bb3232527f5019eda310f3aa7ec/systec_can-V0.9.0.tar.bz2
+tar -xjvf systec_can-V0.9.0.tar.bz2
+cd systec_can
+sudo su
+make
+sudo make modules_install
+sudo make firmware_install
+sudo modprobe can_raw
+sudo modprobe can_dev
+sudo insmod systec_can.ko
+cat >> /etc/modules
+# Systec USB-CANmodul2 drivers
+can_raw
+can_dev
+systec_can
+<CTRL-D>
+sudo depmod -a # to rebuild the modules cache
+
+34. Provide password file for provisioning tool to setup tunnel
+echo "voltage1#systems" | sudo tee ~/SETUP
+
+35. Create setup script setup.sh
+cat << EOF | tee -a /home/bms/setup.sh
+#!/bin/sh -e
+#
+# set up a new Aquion BMS
+#
+
+echo "Downloaded setup script..."
+curl --user AESystems:Voltage1 'https://raw.githubusercontent.com/aquion/System1/master/provision_bms_300.sh' > provision_bms.sh
+chmod a+x provision_bms.sh
+
+echo "Setting up bms: \$1"
+exec sudo ./provision_bms.sh \$1
+
+exit 0
+EOF
+chmod a+x setup.sh
+
+
+36. Timestamp the image IMAGEDATE_2015-06-02
+cd /
+sudo touch IMAGEDATE_$( date '+%Y-%m-%d' )
+
+37. Cleanup
+sudo apt-get clean
+cd $HOME
+rm -r thirdparty
+
+38. Install or build from source some optional utilities
+the_silver_searcher: https://github.com/ggreer/the_silver_searcher
+
+APPENDIX
+
+1. Creating eMMC flasher image
+#run /opt/scripts/tools/eMMC$ sudo ./beaglebone-black-make-microSD-flasher-from-eMMC.sh
+
+2. Windows 7 Internet Sharing for BeagleBone Black
+http://lanceme.blogspot.com/2013/06/windows-7-internet-sharing-for.html
+
+I wish I better understood WHY this was necessary.  
+
+At one point my BBB "just worked".  When it was plugged into my desktop computer via USB (Windows 7 machine) the BBB had internet connectivity just fine.  After working to solve other issues it stopped.  In any case, it works again with the following steps:
+
+
+On the Windows 7 computer:
+
+    Control Panel -> Network and Internet -> Network Connections
+    Right-click your internet connection, Properties, Sharing Tab
+    Click "Allow other network users to connect thru this computer's Internet connection"
+    Select the BeagleBone Black's network connection under "Home networking connection:"
+    Click OK.
+
+
+    Here's the trick:  when I did this, Windows assigned a static IP to the BBB connection.  Why?  No idea.  
+    You have to go back to that connection and reset it to DHCP.
+
+    Control Panel -> Network and Internet -> Network Connections
+    Right-click the BeagleBone Black's connection, Properties
+    Click Internet Protocol Version 4 (TCP/IPv4), Click Properties
+    Click "Optain an IP address automatically"
+    Click "Obtain DNS server address automatically"
+    Click OK.  Click CLOSE.
+
+
+On the BBB:
+
+This makes the BBB route internet traffic thru the host (Windows 7 in this case) and DNS thru Google's DNS Servers (8.8.8.8).  
+
+    route add default gw 192.168.7.1
+    echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+
+Try It:
+
+    ping www.google.com
+
+There is a script in /home/bms to turn on the usb internet.
+
+Optional:
+
+Make it Persistant:
+
+I was able to get it to work by editing the /opt/scripts/boot/am335x_evm.sh file.
+
+Look for the following lines towards the bottom of that file:
+
+/sbin/ifconfig usb0 192.168.7.2 netmask 255.255.255.252
+/usr/sbin/udhcpd -S /etc/udhcpd.conf
+
+Immediately after those lines, add the following line:
+
+/sbin/route add default gw 192.168.7.1
+
+3. Creating a build image
+Rsync the image to a build box/VM:
+rsync -Wa --progress --exclude=/proc --exclude=/dev --exclude=/sys --exclude=/home/bms --delete bms@172.20.105.50:/* .
+
+Or push to azure build box:
+sudo rsync --progress --exclude=/proc --exclude=/dev --exclude=/sys --exclude=/home/bms --delete -Wa -r -l . azureuser@191.238.17.153:beaglebone-root
+
+
+Status API Training Shop Blog About
+© 2016 GitHub, Inc. Terms 
